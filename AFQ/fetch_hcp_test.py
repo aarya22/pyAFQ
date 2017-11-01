@@ -4,6 +4,9 @@ import json
 
 import boto3
 
+afq_home = op.join(op.expanduser('~'), 'AFQ_data')
+
+
 @profile
 def fetch_hcp(subjects):
     """
