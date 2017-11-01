@@ -89,7 +89,6 @@ def fetch_hcp(subjects):
 
     return data_files
 
-@profile
 class AFQ(object):
     """
     This is file folder structure that AFQ requires in your study folder::
