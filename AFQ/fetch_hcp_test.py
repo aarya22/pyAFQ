@@ -7,7 +7,7 @@ import dask.dataframe as ddf
 import glob
 import os.path as op
 import nibabel as nib
-\import numpy as np
+import numpy as np
 import AFQ.segmentation as seg
 import AFQ.registration as reg
 import dipy.core.gradients as dpg
