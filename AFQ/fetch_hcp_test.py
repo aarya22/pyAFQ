@@ -1,3 +1,8 @@
+import os
+import os.path as op
+import json
+
+import boto3
 
 @profile
 def fetch_hcp(subjects):
@@ -75,3 +80,6 @@ def fetch_hcp(subjects):
         json.dump(dataset_description, outfile)
 
     return data_files
+
+if __name__ == '__main__':
+    fetch_hcp(['992774', '994273'])
