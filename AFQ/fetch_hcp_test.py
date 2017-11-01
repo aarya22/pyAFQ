@@ -7,7 +7,18 @@ import dask.dataframe as ddf
 import glob
 import os.path as op
 import nibabel as nib
+\import numpy as np
+import AFQ.segmentation as seg
+import AFQ.registration as reg
 import dipy.core.gradients as dpg
+from dipy.segment.mask import median_otsu
+import dipy.data as dpd
+
+import AFQ.data as afd
+from AFQ.dti import _fit as dti_fit
+import AFQ.tractography as aft
+import dipy.reconst.dti as dpy_dti
+import AFQ.utils.streamlines as aus
 
 afq_home = op.join(op.expanduser('~'), 'AFQ_data')
 BUNDLES = ["ATR", "CGC", "CST", "HCC", "IFO", "ILF", "SLF", "ARC", "UNC"]
@@ -357,6 +368,7 @@ class AFQ(object):
 
     streamlines = property(get_streamlines, set_streamlines)
 
+    @profile
     def set_bundles(self):
         if ('bundles_file' not in self.data_frame.columns or
                 self.force_recompute):
@@ -366,7 +378,7 @@ class AFQ(object):
                                       odf_model=self.odf_model,
                                       directions=self.directions,
                                       force_recompute=self.force_recompute)
-
+    @profile
     def get_bundles(self):
         self.set_bundles()
         return self.data_frame['bundles_file']
@@ -399,7 +411,256 @@ def _get_fname(row, suffix):
                     suffix)
     return fname
 
+@profile
+def make_bundle_dict(bundle_names=BUNDLES):
+    """
+    Create a bundle dictionary, needed for the segmentation
+
+    Parameters
+    ----------
+    bundle_names : list, optional
+        A list of the bundles to be used in this case. Default: all of them
+    """
+    templates = afd.read_templates()
+    # For the arcuate, we need to rename a few of these and duplicate the SLF
+    # ROI:
+    templates['ARC_roi1_L'] = templates['SLF_roi1_L']
+    templates['ARC_roi1_R'] = templates['SLF_roi1_R']
+    templates['ARC_roi2_L'] = templates['SLFt_roi2_L']
+    templates['ARC_roi2_R'] = templates['SLFt_roi2_R']
+
+    afq_bundles = {}
+    # Each bundles gets a digit identifier (to be stored in the tractogram)
+    uid = 1
+    for name in bundle_names:
+        # Considder hard coding since we might have different rulse for
+        # some tracts
+        for hemi in ['_R', '_L']:
+            afq_bundles[name + hemi] = {'ROIs': [templates[name + '_roi1' +
+                                                           hemi],
+                                                 templates[name + '_roi2' +
+                                                           hemi]],
+                                        'rules': [True, True],
+                                        'uid': uid}
+            uid += 1
+
+    return afq_bundles
+
+@profile
+def _bundles(row, wm_labels, odf_model="DTI", directions="det",
+             force_recompute=False):
+    bundles_file = _get_fname(row,
+                              '%s_%s_bundles.trk' % (odf_model,
+                                                     directions))
+    if not op.exists(bundles_file) or force_recompute:
+        streamlines_file = _streamlines(row, wm_labels,
+                                        odf_model=odf_model,
+                                        directions=directions,
+                                        force_recompute=force_recompute)
+        tg = nib.streamlines.load(streamlines_file).tractogram
+        sl = tg.apply_affine(np.linalg.inv(row['dwi_affine'])).streamlines
+        bundle_dict = make_bundle_dict()
+        reg_template = dpd.read_mni_template()
+        mapping = reg.read_mapping(_mapping(row), row['dwi_file'],
+                                   reg_template)
+        bundles = seg.segment(row['dwi_file'],
+                              row['bval_file'],
+                              row['bvec_file'],
+                              sl,
+                              bundle_dict,
+                              reg_template=reg_template,
+                              mapping=mapping)
+        tgram = _tgramer(bundles, bundle_dict, row['dwi_affine'])
+        nib.streamlines.save(tgram, bundles_file)
+    return bundles_file
+
+def _brain_mask(row, median_radius=4, numpass=4, autocrop=False,
+                vol_idx=None, dilate=None, force_recompute=False):
+    brain_mask_file = _get_fname(row, '_brain_mask.nii.gz')
+    if not op.exists(brain_mask_file) or force_recompute:
+        img = nib.load(row['dwi_file'])
+        data = img.get_data()
+        gtab = row['gtab']
+        mean_b0 = np.mean(data[..., ~gtab.b0s_mask], -1)
+        _, brain_mask = median_otsu(mean_b0, median_radius, numpass,
+                                    autocrop, dilate=dilate)
+        be_img = nib.Nifti1Image(brain_mask.astype(int),
+                                 img.affine)
+        nib.save(be_img, brain_mask_file)
+    return brain_mask_file
+
+
+def _dti(row, force_recompute=False):
+    dti_params_file = _get_fname(row, '_dti_params.nii.gz')
+    if not op.exists(dti_params_file) or force_recompute:
+        img = nib.load(row['dwi_file'])
+        data = img.get_data()
+        gtab = row['gtab']
+        brain_mask_file = _brain_mask(row)
+        mask = nib.load(brain_mask_file).get_data()
+        dtf = dti_fit(gtab, data, mask=mask)
+        nib.save(nib.Nifti1Image(dtf.model_params, row['dwi_affine']),
+                 dti_params_file)
+    return dti_params_file
+
+
+def _dti_fit(row):
+    dti_params_file = _dti(row)
+    dti_params = nib.load(dti_params_file).get_data()
+    tm = dpy_dti.TensorModel(row['gtab'])
+    tf = dpy_dti.TensorFit(tm, dti_params)
+    return tf
+
+
+def _dti_fa(row, force_recompute=False):
+    dti_fa_file = _get_fname(row, '_dti_fa.nii.gz')
+    if not op.exists(dti_fa_file) or force_recompute:
+        tf = _dti_fit(row)
+        fa = tf.fa
+        nib.save(nib.Nifti1Image(fa, row['dwi_affine']),
+                 dti_fa_file)
+    return dti_fa_file
+
+
+def _dti_md(row, force_recompute=False):
+    dti_md_file = _get_fname(row, '_dti_md.nii.gz')
+    if not op.exists(dti_md_file) or force_recompute:
+        tf = _dti_fit(row)
+        md = tf.md
+        nib.save(nib.Nifti1Image(md, row['dwi_affine']),
+                 dti_md_file)
+    return dti_md_file
+
+
+# Keep track of functions that compute scalars:
+_scalar_dict = {"dti_fa": _dti_fa,
+                "dti_md": _dti_md}
+
+@profile
+def _mapping(row, force_recompute=False):
+    mapping_file = _get_fname(row, '_mapping.nii.gz')
+    if not op.exists(mapping_file) or force_recompute:
+        gtab = row['gtab']
+        reg_template = dpd.read_mni_template()
+        mapping = reg.syn_register_dwi(row['dwi_file'], gtab,
+                                       template=reg_template)
+
+        reg.write_mapping(mapping, mapping_file)
+    return mapping_file
+
+@profile
+def _streamlines(row, wm_labels, odf_model="DTI", directions="det",
+                 force_recompute=False):
+    """
+    wm_labels : list
+        The values within the segmentation that are considered white matter. We
+        will use this part of the image both to seed tracking (seeding
+        throughout), and for stopping.
+    """
+    streamlines_file = _get_fname(row,
+                                  '%s_%s_streamlines.trk' % (odf_model,
+                                                             directions))
+    if not op.exists(streamlines_file) or force_recompute:
+        if odf_model == "DTI":
+            params_file = _dti(row)
+        else:
+            raise(NotImplementedError)
+
+        seg_img = nib.load(row['seg_file'])
+        dwi_img = nib.load(row['dwi_file'])
+        seg_data_orig = seg_img.get_data()
+
+        # For different sets of labels, extract all the voxels that have any
+        # of these values:
+        wm_mask = np.sum(np.concatenate([(seg_data_orig == l)[..., None]
+                                         for l in wm_labels], -1), -1)
+
+        dwi_data = dwi_img.get_data()
+        resamp_wm = np.round(reg.resample(wm_mask, dwi_data[..., 0],
+                             seg_img.affine,
+                             dwi_img.affine)).astype(int)
+
+        streamlines = aft.track(params_file,
+                                directions='det',
+                                seeds=2,
+                                seed_mask=resamp_wm,
+                                stop_mask=resamp_wm)
+
+        aus.write_trk(streamlines_file, streamlines,
+                      affine=row['dwi_affine'])
+
+    return streamlines_file
+
+@profile
+def _tgramer(bundles, bundle_dict, affine):
+    tgram = nib.streamlines.Tractogram([], {'bundle': []})
+    for b in bundles:
+        print("Segmenting: %s" % b)
+        this_sl = list(bundles[b])
+        this_tgram = nib.streamlines.Tractogram(
+            this_sl,
+            data_per_streamline={
+                'bundle': (len(this_sl) *
+                           [bundle_dict[b]['uid']])},
+                affine_to_rasmm=affine)
+        tgram = aus.add_bundles(tgram, this_tgram)
+    return tgram
+
+@profile
+def _tract_profiles(row, wm_labels, odf_model="DTI", directions="det",
+                    scalars=["dti_fa", "dti_md"], weighting=None,
+                    force_recompute=False):
+    profiles_file = _get_fname(row, '_profiles.csv')
+    if not op.exists(profiles_file) or force_recompute:
+        bundles_file = _bundles(row,
+                                wm_labels,
+                                odf_model=odf_model,
+                                directions=directions,
+                                force_recompute=force_recompute)
+        bundle_dict = make_bundle_dict()
+        keys = []
+        vals = []
+        for k in bundle_dict.keys():
+            keys.append(bundle_dict[k]['uid'])
+            vals.append(k)
+        reverse_dict = dict(zip(keys, vals))
+
+        bundle_names = []
+        profiles = []
+        node_numbers = []
+        scalar_names = []
+
+        trk = nib.streamlines.load(bundles_file)
+        for scalar in scalars:
+            scalar_file = _scalar_dict[scalar](row,
+                                               force_recompute=force_recompute)
+            scalar_data = nib.load(scalar_file).get_data()
+            for b in np.unique(trk.tractogram.data_per_streamline['bundle']):
+                idx = np.where(
+                    trk.tractogram.data_per_streamline['bundle'] == b)[0]
+                this_sl = list(trk.streamlines[idx])
+                bundle_name = reverse_dict[b]
+                this_profile = seg.calculate_tract_profile(
+                    scalar_data,
+                    this_sl,
+                    affine=row['dwi_affine'])
+                nodes = list(np.arange(this_profile.shape[0]))
+                bundle_names.extend([bundle_name] * len(nodes))
+                node_numbers.extend(nodes)
+                scalar_names.extend([scalar] * len(nodes))
+                profiles.extend(list(this_profile))
+
+        profile_dframe = pd.DataFrame(dict(profiles=profiles,
+                                           bundle=bundle_names,
+                                           node=node_numbers,
+                                           scalar=scalar_names))
+        profile_dframe.to_csv(profiles_file)
+
+    return profiles_file
+
 if __name__ == '__main__':
     fetch_hcp(['992774', '994273'])
     base_dir = op.join(op.expanduser('~'), 'AFQ_data', 'HCP')
     myafq = AFQ(preproc_path=base_dir, sub_prefix='sub')
+    myafq.bundles[0]
+
