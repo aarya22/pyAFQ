@@ -10,6 +10,7 @@ import nibabel as nib
 import dipy.core.gradients as dpg
 
 afq_home = op.join(op.expanduser('~'), 'AFQ_data')
+BUNDLES = ["ATR", "CGC", "CST", "HCC", "IFO", "ILF", "SLF", "ARC", "UNC"]
 
 @profile
 def fetch_hcp(subjects):
