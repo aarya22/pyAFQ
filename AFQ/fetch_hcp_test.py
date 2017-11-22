@@ -672,13 +672,15 @@ if __name__ == '__main__':
     base_dir = op.join(op.expanduser('~'), 'AFQ_data', 'stanford_hardi')
     myafq = AFQ(preproc_path=base_dir, sub_prefix='sub',
                     wm_labels=[1, 2])
-    #myafq.bundles[0]
-    row = {'bvec_file': '/home/ubuntu/AFQ_data/stanford_hardi/sub-01/sess-01/dwi/sub-01_sess-01_dwi.bvec',
-           'bval_file': '/home/ubuntu/AFQ_data/stanford_hardi/sub-01/sess-01/dwi/sub-01_sess-01_dwi.bval',
-           'dwi_file': '/home/ubuntu/AFQ_data/stanford_hardi/sub-01/sess-01/dwi/sub-01_sess-01_dwi.nii.gz',
-           'dwi_affine': nib.load('/home/ubuntu/AFQ_data/stanford_hardi/sub-01/sess-01/dwi/sub-01_sess-01_dwi.nii.gz').get_affine()}
-
-    _bundles(row, [1, 2])
+    df = myafq.data_frame
+    print(df[0])
+    # #myafq.bundles[0]
+    # row = {'bvec_file': '/home/ubuntu/AFQ_data/stanford_hardi/sub-01/sess-01/dwi/sub-01_sess-01_dwi.bvecs',
+    #        'bval_file': '/home/ubuntu/AFQ_data/stanford_hardi/sub-01/sess-01/dwi/sub-01_sess-01_dwi.bvals',
+    #        'dwi_file': '/home/ubuntu/AFQ_data/stanford_hardi/sub-01/sess-01/dwi/sub-01_sess-01_dwi.nii.gz',
+    #        'dwi_affine': nib.load('/home/ubuntu/AFQ_data/stanford_hardi/sub-01/sess-01/dwi/sub-01_sess-01_dwi.nii.gz').get_affine()}
+    #
+    # _bundles(row, [1, 2])
 
 
 
