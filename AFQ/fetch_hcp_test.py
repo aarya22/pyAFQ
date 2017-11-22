@@ -21,7 +21,11 @@ import dipy.reconst.dti as dpy_dti
 import AFQ.utils.streamlines as aus
 
 afq_home = op.join(op.expanduser('~'), 'AFQ_data')
-BUNDLES = ["ATR", "CGC", "CST", "HCC", "IFO", "ILF", "SLF", "ARC", "UNC"]
+BUNDLES = ["ATR"]
+
+
+def do_preprocessing():
+    raise NotImplementedError
 
 @profile
 def fetch_hcp(subjects):
@@ -659,8 +663,16 @@ def _tract_profiles(row, wm_labels, odf_model="DTI", directions="det",
     return profiles_file
 
 if __name__ == '__main__':
-    fetch_hcp(['992774', '994273'])
-    base_dir = op.join(op.expanduser('~'), 'AFQ_data', 'HCP')
-    myafq = AFQ(preproc_path=base_dir, sub_prefix='sub')
+    # fetch_hcp(['992774', '994273'])
+    # base_dir = op.join(op.expanduser('~'), 'AFQ_data', 'HCP')
+    # myafq = AFQ(preproc_path=base_dir, sub_prefix='sub')
+    # myafq.bundles[0]
+
+    afd.organize_stanford_data()
+    base_dir = op.join(op.expanduser('~'), 'AFQ_data', 'stanford_hardi')
+    myafq = AFQ(preproc_path=base_dir, sub_prefix='sub',
+                    wm_labels=[1, 2])
     myafq.bundles[0]
+
+
 
